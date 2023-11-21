@@ -1,9 +1,7 @@
 import sqlite3
 import exception
 from datetime import datetime
-from exercise import Exercise
-from body_part import BodyPart
-from target_muscle import TargetMuscle
+from user import User
 
 
 class Database:
@@ -11,7 +9,6 @@ class Database:
         self.__database_name = database_name
 
     def __connect(self):
-        # TODO: VALIDATION
         self.db = sqlite3.connect(self.__database_name)
         self.cursor = self.db.cursor()
         # return self.cursor
@@ -22,8 +19,7 @@ class Database:
         # Close connection
         self.db.close()
 
-    def add_user(self, first_name, last_name, username, password):
-        # TODO: VALIDATE FOR SAME USERNAME
+    def add_user(self, username, first_name, last_name, password):
         self.__connect()
         self.cursor.execute("""
             INSERT INTO users VALUES (:id, :first_name, :last_name, :username, :password)
@@ -41,13 +37,23 @@ class Database:
     def get_user(self, username, password):
         self.__connect()
         self.cursor.execute("SELECT * FROM users AS u WHERE u.username == :username", {'username': username})
+        # Return user in format: (id, firstName, lastName, username, password)
         result = self.cursor.fetchone()
         # If no user found
         if result is None: raise Exception(exception.USER_OR_PASSWORD_WRONG)
         # If password is wrong
         if result[4] != password: raise Exception(exception.USER_OR_PASSWORD_WRONG)
 
-        return True
+        return User(result[0], result[1], result[2], result[3], result[4])
+
+    def get_user_by_username(self, username):
+        self.__connect()
+        self.cursor.execute("SELECT * FROM users AS u WHERE u.username == :username", {'username': username})
+        # Return user in format: (id, firstName, lastName, username, password)
+        result = self.cursor.fetchone()
+        # If no user found
+        if result: raise Exception(exception.USERNAME_ALREADY_EXISTS)
+
 
     def get_all_body_parts(self):
         self.__connect()
@@ -57,7 +63,18 @@ class Database:
         if result is None: raise Exception(exception.BODY_PARTS_TABLE_EMPTY)
 
         return result
+
+    def get_all_difficulties(self):
+        self.__connect()
+        self.cursor.execute("SELECT * FROM difficulty")
+        result = self.cursor.fetchall()
+        # If no user found
+        if result is None: raise Exception(exception.DIFFICULTY_TABLE_EMPTY)
+
+        return result
+
     def add_exercise(self, exercise):
+        self.__connect()
         self.cursor.execute(
             """
                 INSERT INTO exercises VALUES(:id, :body_part_id, :gif_url, :name, :target_id, :secondary_muscles, :instructions)
@@ -72,8 +89,10 @@ class Database:
                 'instructions': exercise.instructions
             }
         )
+        self.__commit()
 
     def __add_body_part(self, body_part):
+        self.__connect()
         self.cursor.execute(
             """
                 INSERT INTO body_parts VALUES(:id, :name)
@@ -83,8 +102,10 @@ class Database:
                 'name': body_part.name,
             }
         )
+        self.__commit()
 
     def __add_target_muscle(self, target_muscle):
+        self.__connect()
         self.cursor.execute(
             """
                 INSERT INTO target_muscles VALUES(:id, :name)
@@ -94,6 +115,7 @@ class Database:
                 'name': target_muscle.name,
             }
         )
+        self.__commit()
 
     def get_user_workouts_for_current_month(self, user_id):
         self.__connect()
@@ -110,7 +132,7 @@ class Database:
         self.cursor.execute("SELECT * FROM users_workouts AS uw WHERE uw.user_id == :user_id", {'user_id': user_id})
         result = self.cursor.fetchall()
 
-        # TODO: It is not needed to create validation if missing,
+        #  It is not needed to create validation if missing,
         #  otherwise we will not have button active in the calendar
         for workout in result:
             curr_date = self.__parse_string_to_date(workout[2]).day
@@ -137,16 +159,41 @@ class Database:
 
         return result
 
-    def get_exercises_by_body_parts_and_difficulty(self, body_parts, difficulty):
-        body_parts_ids = []
-        [body_parts_ids.append(self.get_body_part_id_by_name(bp_name)) for bp_name in body_parts]
+    def get_exercises_by_body_parts_and_difficulty(self, body_parts_ids, difficulty):
+        # body_parts_ids = []
+        # [body_parts_ids.append(self.get_body_part_id_by_name(bp_name)) for bp_name in body_parts]
 
-        test = body_parts.join[]
+
+        query = "SELECT e.id, e.name, e.body_part_id " \
+                "FROM exercises AS e " \
+                "WHERE "
+
+        multi_filter = []
+        for bp_id in body_parts_ids:
+            multi_filter.append(f"e.body_part_id == {bp_id}")
+
+        query += " OR ".join(multi_filter) + f" AND e.difficulty == {difficulty}"
 
         self.__connect()
-        self.cursor.execute("SELECT e.id, e.name "
-                            "FROM exercises AS e "
-                            "WHERE e.body_part_id IN (:body_parts_arr) AND "
-                            "e.difficulty == :difficulty", {'body_parts_arr': body_parts_ids, 'difficulty': difficulty})
-        result = self.cursor.fetchall()
-        [print(i) for i in result]
+        self.cursor.execute(query)
+        result = self.cursor.fetchall() # returns tuple, format: (997, 'lever t-bar reverse grip row')
+
+        return result
+
+    def save_workout_for_the_day(self, exercises_arr_tuple, user_id):
+        if len(exercises_arr_tuple) < 1: raise Exception(exception.NO_WORKOUT_EXERCISES_AVAILABLE)
+        self.__connect()
+        exercises_ids = [str(i[0]) for i in exercises_arr_tuple]
+        self.cursor.execute(
+            """
+                INSERT INTO users_workouts VALUES(:id, :exercises_ids, :date, :user_id)
+            """,
+            {
+                'id': None,
+                'exercises_ids': str(",".join(exercises_ids)),
+                'date': datetime.today().strftime('%Y-%m-%d'),
+                'user_id': user_id
+            }
+        )
+        self.__commit()
+
